@@ -8,7 +8,7 @@ import { Label } from "@/components/ui/label";
 import { NativeSelect } from "@/components/ui/native-select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import type { Profile } from "@/lib/types";
-import { inviteUser, saveSettings, updateUser } from "./actions";
+import { createGrowthTemplateDraft, inviteUser, saveAutomationSettings, saveSettings, updateUser } from "./actions";
 
 function useRun() {
   const router = useRouter();
@@ -105,6 +105,60 @@ export function MetaSettingsForm({ settings, disabled }: { settings: Record<stri
         {field("est_rate_marketing", "Estimated cost per marketing message", "Used only for estimates. Take it from Meta's current rate card for your recipients' country.", "number")}
         {field("est_rate_utility", "Estimated cost per utility message", undefined, "number")}
         <div className="sm:col-span-2"><Button disabled={disabled || pending}>Save WhatsApp settings</Button></div>
+      </fieldset>
+    </form>
+  );
+}
+
+export function AutomationForm({
+  meetingUrl,
+  templateId,
+  templates,
+  disabled,
+}: {
+  meetingUrl: string;
+  templateId: string;
+  templates: { id: string; name: string; language: string }[];
+  disabled: boolean;
+}) {
+  const router = useRouter();
+  const { pending, run } = useRun();
+  return (
+    <form
+      className="grid gap-4"
+      onSubmit={(e) => {
+        e.preventDefault();
+        const fd = new FormData(e.currentTarget);
+        run(() => saveAutomationSettings({ meeting_url: String(fd.get("meeting_url") ?? ""), growth_report_template_id: String(fd.get("growth_report_template_id") ?? "") }));
+      }}
+    >
+      <fieldset disabled={disabled || pending} className="grid gap-4 sm:grid-cols-2">
+        <div className="grid gap-1.5">
+          <Label htmlFor="meeting_url">Meeting / calendar URL</Label>
+          <Input id="meeting_url" name="meeting_url" type="url" placeholder="https://calendly.com/your-team/30min" defaultValue={meetingUrl} />
+          <p className="text-xs text-muted-foreground">Sent when someone taps “Free Growth Report”. While empty, the tap is logged in the inbox for a manual reply.</p>
+        </div>
+        <div className="grid gap-1.5">
+          <Label htmlFor="growth_report_template_id">Reply with</Label>
+          <NativeSelect id="growth_report_template_id" name="growth_report_template_id" defaultValue={templateId}>
+            <option value="">Interactive message — button “Schedule Meeting” (no approval needed)</option>
+            {templates.map((t) => <option key={t.id} value={t.id}>Template: {t.name} ({t.language})</option>)}
+          </NativeSelect>
+          <p className="text-xs text-muted-foreground">
+            WhatsApp limits interactive button labels to 20 characters. For the exact label “Schedule Your Meeting”, use an approved template with a URL button.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 sm:col-span-2">
+          <Button disabled={disabled || pending}>Save automation settings</Button>
+          <Button type="button" variant="outline" disabled={disabled || pending || !meetingUrl}
+            onClick={() => run(async () => {
+              const r = await createGrowthTemplateDraft();
+              if (r.ok && r.id) router.push(`/templates/${r.id}`);
+              return r;
+            })}>
+            Create “Schedule Your Meeting” template draft
+          </Button>
+        </div>
       </fieldset>
     </form>
   );

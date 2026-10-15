@@ -175,3 +175,18 @@ export function buildCtaUrlMessage(toE164: string, body: string, displayText: st
     },
   };
 }
+
+/** Inverse of buildSendComponents: mapping-key → value, for rendering sent templates. */
+export function valuesFromSendComponents(components: SendComponent[] | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of components ?? []) {
+    if (c.type === "header" || c.type === "body") {
+      c.parameters.forEach((p, i) => {
+        if (p.type === "text") out[`${c.type}.${(p as TextParam).parameter_name ?? i + 1}`] = (p as TextParam).text;
+      });
+    } else if (c.type === "button" && c.sub_type === "url") {
+      c.parameters.forEach((p, i) => (out[`button.${c.index}.${p.parameter_name ?? i + 1}`] = p.text));
+    }
+  }
+  return out;
+}

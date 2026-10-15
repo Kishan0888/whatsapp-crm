@@ -39,6 +39,12 @@ Campaign messages are sent by `/api/worker/send`, which needs to be called regul
 - **Supabase:** a `pg_cron` + `pg_net` job that POSTs to the endpoint every minute also works.
 - In development, use **Process now** on a running campaign.
 
+## Inbox & button flows
+- Apply `supabase/migrations/20261015000004_inbox.sql`.
+- In **Settings → Inbox automation**, set your meeting/calendar URL. Optionally create the “Schedule Your Meeting” template draft, submit it in Templates, and select it once approved (interactive buttons are limited to 20 characters, so without a template the button reads “Schedule Meeting”).
+- Your campaign templates need quick-reply buttons labelled exactly **Free Growth Report** and **Send Details**.
+- Staff replies and automated replies only go out inside WhatsApp's 24-hour service window, which a contact's message or button tap opens.
+
 ## Safety
 - WhatsApp secrets live only in server environment variables.
 - Only APPROVED templates (re-checked with Meta at launch in live mode) can be sent.
