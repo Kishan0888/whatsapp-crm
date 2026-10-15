@@ -33,7 +33,24 @@ export type WebhookEvent =
       reason: string | null;
       detail?: string;
     }
-  | { key: string; type: "inbound"; wamid: string; from: string; text: string };
+  | InboundEvent;
+
+export interface InboundEvent {
+  key: string;
+  type: "inbound";
+  wamid: string;
+  from: string;
+  /** Text, button label, interactive title or media caption ("" if none). */
+  text: string;
+  // Optional fields (absent on events stored before the inbox existed).
+  msgType?: string;
+  timestamp?: string;
+  contextId?: string;
+  profileName?: string;
+  /** Quick-reply payload (template button) or interactive reply id. */
+  buttonPayload?: string;
+  media?: { id?: string; mime_type?: string; filename?: string };
+}
 
 interface RawStatus {
   id: string;
@@ -43,13 +60,28 @@ interface RawStatus {
   pricing?: Record<string, unknown>;
   errors?: { code: number | string; title?: string; message?: string; error_data?: { details?: string } }[];
 }
+interface RawMedia {
+  id?: string;
+  mime_type?: string;
+  caption?: string;
+  filename?: string;
+}
 interface RawMessage {
   id: string;
   from: string;
   type: string;
+  timestamp?: string;
+  context?: { id?: string };
   text?: { body?: string };
   button?: { text?: string; payload?: string };
-  interactive?: { button_reply?: { title?: string; id?: string } };
+  interactive?: { type?: string; button_reply?: { title?: string; id?: string }; list_reply?: { title?: string; id?: string } };
+  image?: RawMedia;
+  video?: RawMedia;
+  document?: RawMedia;
+  audio?: RawMedia;
+  sticker?: RawMedia;
+  reaction?: { emoji?: string };
+  location?: { latitude?: number; longitude?: number; name?: string; address?: string };
 }
 interface RawTemplateStatus {
   event: string;
@@ -69,7 +101,11 @@ export function parseWebhook(body: unknown): WebhookEvent[] {
   for (const entry of b.entry) {
     for (const change of entry.changes ?? []) {
       if (change.field === "messages") {
-        const v = change.value as { statuses?: RawStatus[]; messages?: RawMessage[] };
+        const v = change.value as {
+          statuses?: RawStatus[];
+          messages?: RawMessage[];
+          contacts?: { wa_id?: string; profile?: { name?: string } }[];
+        };
         for (const s of v.statuses ?? []) {
           const err = s.errors?.[0];
           events.push({
@@ -85,8 +121,31 @@ export function parseWebhook(body: unknown): WebhookEvent[] {
           });
         }
         for (const m of v.messages ?? []) {
-          const text = m.text?.body ?? m.button?.payload ?? m.button?.text ?? m.interactive?.button_reply?.title ?? "";
-          events.push({ key: `in:${m.id}`, type: "inbound", wamid: m.id, from: m.from, text });
+          const reply = m.interactive?.button_reply ?? m.interactive?.list_reply;
+          const media = m.image ?? m.video ?? m.document ?? m.audio ?? m.sticker;
+          const text =
+            m.text?.body ??
+            m.button?.text ??
+            m.button?.payload ??
+            reply?.title ??
+            media?.caption ??
+            (m.reaction?.emoji ? `Reacted ${m.reaction.emoji}` : undefined) ??
+            (m.location ? [m.location.name, m.location.address].filter(Boolean).join(", ") || "Shared a location" : undefined) ??
+            "";
+          const profileName = v.contacts?.find((c) => c.wa_id === m.from)?.profile?.name ?? v.contacts?.[0]?.profile?.name;
+          events.push({
+            key: `in:${m.id}`,
+            type: "inbound",
+            wamid: m.id,
+            from: m.from,
+            text,
+            msgType: m.type,
+            timestamp: m.timestamp,
+            contextId: m.context?.id,
+            profileName,
+            buttonPayload: m.button?.payload ?? reply?.id,
+            media: media ? { id: media.id, mime_type: media.mime_type, filename: media.filename } : undefined,
+          });
         }
       } else if (change.field === "message_template_status_update") {
         const v = change.value as RawTemplateStatus;

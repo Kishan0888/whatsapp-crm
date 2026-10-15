@@ -1,7 +1,9 @@
 import "server-only";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone } from "@/lib/phone";
-import { isOptOutMessage, type WebhookEvent } from "./webhook";
+import { type WebhookEvent } from "./webhook";
+import { createInboxDeps } from "@/lib/inbox/deps";
+import { handleInbound } from "@/lib/inbox/handler";
 
 const MAX_EVENT_ATTEMPTS = 20;
 
@@ -35,12 +37,13 @@ export async function applyEvent(admin: SupabaseClient, e: WebhookEvent): Promis
     return error ? { done: false, error: error.message } : { done: true };
   }
 
-  // Inbound message: only opt-out keywords are acted on (no inbox in this CRM).
-  if (isOptOutMessage(e.text)) await optOut(admin, `+${e.from}`, `Replied "${e.text.slice(0, 50)}"`, "webhook_keyword");
+  // Inbound message: store in the inbox, apply opt-out keywords and button flows.
+  const deps = await createInboxDeps(admin, (phone, reason, source) => optOut(admin, phone, reason, source));
+  await handleInbound(deps, e);
   return { done: true };
 }
 
-async function optOut(admin: SupabaseClient, phone: string, reason: string, source: string) {
+export async function optOut(admin: SupabaseClient, phone: string, reason: string, source: string) {
   const norm = normalizePhone(phone);
   if (!norm.ok) return;
   await admin.from("opt_outs").upsert({ phone_e164: norm.e164, reason, source }, { onConflict: "phone_e164", ignoreDuplicates: true });
@@ -49,23 +52,33 @@ async function optOut(admin: SupabaseClient, phone: string, reason: string, sour
 }
 
 /**
- * Store events idempotently (unique event_key) and process the new ones.
- * Duplicate deliveries from Meta's retries are ignored.
+ * Store events idempotently (unique event_key) and process any that are not
+ * yet processed — new ones, and ones a previous delivery failed to process
+ * (so Meta's retries re-drive them). Already-processed duplicates are skipped.
  */
 export async function ingestEvents(admin: SupabaseClient, events: WebhookEvent[]) {
-  if (!events.length) return { stored: 0, processed: 0 };
+  if (!events.length) return { stored: 0, processed: 0, failedInbound: 0 };
   const rows = events.map((e) => ({ event_key: e.key, event_type: e.type, payload: e }));
   const { data: inserted, error } = await admin
     .from("webhook_events")
     .upsert(rows, { onConflict: "event_key", ignoreDuplicates: true })
-    .select("id, event_key");
+    .select("id");
   if (error) throw new Error(`Could not store webhook events: ${error.message}`);
+  const { data: todo, error: e2 } = await admin
+    .from("webhook_events")
+    .select("id, event_key, attempts")
+    .in("event_key", events.map((e) => e.key))
+    .is("processed_at", null)
+    .order("id");
+  if (e2) throw new Error(`Could not read webhook events: ${e2.message}`);
   let processed = 0;
-  for (const row of inserted ?? []) {
+  let failedInbound = 0;
+  for (const row of todo ?? []) {
     const e = events.find((x) => x.key === row.event_key)!;
-    if (await settle(admin, row.id, e, 0)) processed++;
+    if (await settle(admin, row.id, e, row.attempts)) processed++;
+    else if (e.type === "inbound") failedInbound++;
   }
-  return { stored: inserted?.length ?? 0, processed };
+  return { stored: inserted?.length ?? 0, processed, failedInbound };
 }
 
 async function settle(admin: SupabaseClient, id: number, e: WebhookEvent, attempts: number) {

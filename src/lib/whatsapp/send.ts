@@ -149,3 +149,44 @@ export function buildTemplateMessage(toE164: string, t: TemplateSnapshot, compon
     },
   };
 }
+
+/** Free-form text (only inside the 24-hour customer service window). */
+export function buildTextMessage(toE164: string, body: string) {
+  return {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: toE164.replace(/^\+/, ""),
+    type: "text",
+    text: { body: body.slice(0, 4096), preview_url: /https?:\/\//.test(body) },
+  };
+}
+
+/** Interactive message with one URL button (only inside the customer service window). */
+export function buildCtaUrlMessage(toE164: string, body: string, displayText: string, url: string) {
+  return {
+    messaging_product: "whatsapp",
+    recipient_type: "individual",
+    to: toE164.replace(/^\+/, ""),
+    type: "interactive",
+    interactive: {
+      type: "cta_url",
+      body: { text: body.slice(0, 1024) },
+      action: { name: "cta_url", parameters: { display_text: displayText.slice(0, 20), url } },
+    },
+  };
+}
+
+/** Inverse of buildSendComponents: mapping-key → value, for rendering sent templates. */
+export function valuesFromSendComponents(components: SendComponent[] | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const c of components ?? []) {
+    if (c.type === "header" || c.type === "body") {
+      c.parameters.forEach((p, i) => {
+        if (p.type === "text") out[`${c.type}.${(p as TextParam).parameter_name ?? i + 1}`] = (p as TextParam).text;
+      });
+    } else if (c.type === "button" && c.sub_type === "url") {
+      c.parameters.forEach((p, i) => (out[`button.${c.index}.${p.parameter_name ?? i + 1}`] = p.text));
+    }
+  }
+  return out;
+}

@@ -1,6 +1,6 @@
 "use client";
 import Link from "next/link";
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Download, Loader2, Pause, Play, RotateCcw, Send, XCircle, Zap } from "lucide-react";
 import { toast } from "sonner";
@@ -27,16 +27,7 @@ function useRun() {
   return { pending, run };
 }
 
-/** Refresh the page every 10s while a campaign is sending. */
-export function AutoRefresh({ active }: { active: boolean }) {
-  const router = useRouter();
-  useEffect(() => {
-    if (!active) return;
-    const t = setInterval(() => router.refresh(), 10_000);
-    return () => clearInterval(t);
-  }, [active, router]);
-  return null;
-}
+export { AutoRefresh } from "@/components/auto-refresh";
 
 export function LaunchDialog({
   id, eligible, rate, currency, live, templateName,

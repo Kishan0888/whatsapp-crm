@@ -40,6 +40,9 @@ export async function POST(req: NextRequest) {
   }
   try {
     const result = await ingestEvents(createAdminClient(), parseWebhook(body));
+    // If an inbound message couldn't be processed, ask Meta to redeliver; the
+    // stored event is re-driven on retry and replies stay idempotent.
+    if (result.failedInbound > 0) return NextResponse.json({ ok: false, ...result }, { status: 500 });
     return NextResponse.json({ ok: true, ...result });
   } catch (e) {
     // Non-200 makes Meta retry delivery; events are stored idempotently.

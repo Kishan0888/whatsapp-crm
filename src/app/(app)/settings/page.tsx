@@ -5,7 +5,9 @@ import { PageHeader } from "@/components/page-header";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { Profile, Segment } from "@/lib/types";
-import { InviteForm, MetaSettingsForm, UsersTable } from "./settings-forms";
+import { isGrowthTemplateUsable } from "@/lib/inbox/deps";
+import type { WhatsAppTemplate } from "@/lib/types";
+import { AutomationForm, InviteForm, MetaSettingsForm, UsersTable } from "./settings-forms";
 
 export const metadata = { title: "Settings" };
 
@@ -15,11 +17,13 @@ export default async function SettingsPage() {
   const { profile } = await requireUser();
   const isAdmin = profile.role === "admin";
   const supabase = await createClient();
-  const [{ data: users }, { data: settings }, { data: segments }] = await Promise.all([
+  const [{ data: users }, { data: settings }, { data: segments }, { data: approved }] = await Promise.all([
     supabase.from("profiles").select("*").order("created_at"),
     supabase.from("app_settings").select("*").single(),
     supabase.from("segments").select("*").order("sort_order"),
+    supabase.from("whatsapp_templates").select("id, name, language, status, components").eq("status", "APPROVED").order("name"),
   ]);
+  const growthTemplates = ((approved ?? []) as Pick<WhatsAppTemplate, "id" | "name" | "language" | "status" | "components">[]).filter(isGrowthTemplateUsable);
   const mode = whatsappMode();
 
   return (
@@ -47,6 +51,23 @@ export default async function SettingsPage() {
               <p className="mt-1 text-xs text-muted-foreground">In your Meta app → WhatsApp → Configuration, use this URL and your verify token, then subscribe to the <strong>messages</strong> and <strong>message_template_status_update</strong> fields.</p>
             </div>
             {settings && <MetaSettingsForm settings={settings} disabled={!isAdmin} />}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Inbox automation</CardTitle>
+            <CardDescription>
+              Replies to the “Free Growth Report” and “Send Details” quick-reply buttons. Replies are sent directly (not through the campaign sender) and only inside WhatsApp&apos;s 24-hour service window.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AutomationForm
+              meetingUrl={(settings?.meeting_url as string | null) ?? ""}
+              templateId={(settings?.growth_report_template_id as string | null) ?? ""}
+              templates={growthTemplates}
+              disabled={!isAdmin}
+            />
           </CardContent>
         </Card>
 

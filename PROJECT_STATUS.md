@@ -1,6 +1,6 @@
 # Project status — WhatsApp CRM
 
-_Last updated: 2026-10-13_
+_Last updated: 2026-10-15_
 
 All planned modules are implemented. What remains is configuration against your real Supabase project and Meta app, and a live end-to-end test (see "Not yet verified").
 
@@ -29,7 +29,16 @@ All planned modules are implemented. What remains is configuration against your 
 
 **Analytics** — per-campaign stats, rates, failure reasons, recipient table with filters, recipient CSV export, auto-refresh while sending; analytics page with funnel and campaign history; CRM estimates shown separately from Meta-reported charges (pricing_analytics, labelled approximate per Meta); audit log viewer.
 
+**Inbox & button flows** (branch `feature/inbox-and-button-flows`, migration `20261015000004_inbox.sql`)
+- Inbox page: conversations (contact, phone, last message, time, unread), chronological thread incl. campaign messages, status ticks from webhooks, replies via Cloud API (admin/manager/agent; 24-hour window enforced), loading/empty/error states, auto-refresh.
+- Inbound messages stored idempotently (unique wamid), linked to leads by E.164 phone (also when the lead is created later).
+- "Free Growth Report" tap → thank-you with a URL button to the meeting link (interactive `cta_url`, or an approved template chosen in Settings). Held as a staff note if no meeting URL is set.
+- "Send Details" tap → asks representative name, hospital name, preferred date/time one at a time; CANCEL / RESTART / re-tap; staff can cancel from the inbox. State persisted on the conversation (compare-and-set, replay guard), answers saved to the lead (fills empty fields only, full record in custom fields + notes), lead created if needed.
+- Replies are sent directly (never via the campaign worker), each one exactly once per inbound message (`auto:<wamid>:<n>` keys, pending → sending → sent claim). Mock mode records but never calls Meta.
+- If an inbound message can't be processed, the webhook returns 500 so Meta redelivers; the stored event is re-driven.
+
 ## Checks
+- Inbox work (2026-10-15): 87 tests pass (+31: SQL idempotency/RLS/status sync, flow state machine, end-to-end handler with mocked Cloud API incl. crash-and-retry), lint/typecheck/build ✅, smoke test: unsigned/forged webhooks 401, verify 200, inbox requires login.
 - `npm run typecheck` ✅  `npm run lint` ✅  `npm run test` ✅ — 56 tests: migrations executed in PGlite (RLS, import, opt-out, audience counts, atomic launch, controls, stale handling, stats, status transitions), template validation/build/round-trip, send payloads (positional, named, media, URL button), error classification, webhook signature + parsing.
 - `next build` ✅ (26 routes). Production smoke test ✅: login redirect, webhook verify (200/403), bad/missing signature (401), valid signature (200), worker auth (401).
 

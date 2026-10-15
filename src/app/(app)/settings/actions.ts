@@ -4,6 +4,8 @@ import { z } from "zod";
 import { ADMIN_ONLY, assertRole, audit, AuthError } from "@/lib/auth";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { isGrowthTemplateUsable } from "@/lib/inbox/deps";
+import { saveTemplateDraft } from "../templates/actions";
 
 type R = { ok: true; message?: string } | { ok: false; error: string };
 const fail = (e: unknown): R => ({ ok: false, error: e instanceof AuthError || e instanceof Error ? e.message : "Unexpected error" });
@@ -75,6 +77,65 @@ export async function saveSettings(input: Record<string, string>): Promise<R> {
     await audit("settings.update", "app_settings", "1", d);
     revalidatePath("/settings");
     return { ok: true, message: "Settings saved" };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+const automationSchema = z.object({
+  meeting_url: z
+    .string()
+    .trim()
+    .max(2000)
+    .refine((v) => v === "" || /^https:\/\/\S+$/.test(v), "Meeting URL must start with https://"),
+  growth_report_template_id: z.union([z.uuid(), z.literal("")]),
+});
+
+/** Meeting link + optional approved template for the "Free Growth Report" reply. */
+export async function saveAutomationSettings(input: { meeting_url: string; growth_report_template_id: string }): Promise<R> {
+  try {
+    const { profile } = await assertRole(ADMIN_ONLY);
+    const p = automationSchema.safeParse(input);
+    if (!p.success) return { ok: false, error: p.error.issues[0].message };
+    const supabase = await createClient();
+    if (p.data.growth_report_template_id) {
+      const { data: t } = await supabase.from("whatsapp_templates").select("status, components").eq("id", p.data.growth_report_template_id).single();
+      if (!t || !isGrowthTemplateUsable(t)) return { ok: false, error: "That template must be APPROVED, have a URL button and no variables or media header." };
+    }
+    const { error } = await supabase
+      .from("app_settings")
+      .update({ meeting_url: p.data.meeting_url || null, growth_report_template_id: p.data.growth_report_template_id || null, updated_by: profile.id })
+      .eq("id", 1);
+    if (error) return { ok: false, error: error.message };
+    await audit("settings.automation", "app_settings", "1", p.data);
+    revalidatePath("/settings");
+    return { ok: true, message: "Automation settings saved" };
+  } catch (e) {
+    return fail(e);
+  }
+}
+
+/** Local draft (not submitted) of a template with a 25-char "Schedule Your Meeting" URL button. */
+export async function createGrowthTemplateDraft(): Promise<R & { id?: string }> {
+  try {
+    await assertRole(ADMIN_ONLY);
+    const supabase = await createClient();
+    const { data: s } = await supabase.from("app_settings").select("meeting_url").eq("id", 1).single();
+    if (!s?.meeting_url) return { ok: false, error: "Save a meeting URL first." };
+    const r = await saveTemplateDraft(null, {
+      name: "growth_report_meeting",
+      language: "en",
+      category: "UTILITY",
+      header: { format: "NONE", text: "", example: "", handle: "" },
+      body: {
+        text: "Thank you for requesting your Free Growth Report! Our team will prepare it for your hospital. Pick a convenient time for a short call so we can walk you through it.",
+        examples: [],
+      },
+      footer: "",
+      buttons: [{ type: "URL", text: "Schedule Your Meeting", url: s.meeting_url, example: "" }],
+    });
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, id: r.data.id, message: "Draft created — review and submit it in Templates" };
   } catch (e) {
     return fail(e);
   }
