@@ -115,6 +115,8 @@ export interface Campaign {
   total_recipients: number;
   est_rate: number;
   est_cost: number;
+  est_unpriced: number;
+  est_country: string | null;
   currency: string;
   last_error: string | null;
   template_snapshot: import("@/lib/whatsapp/send").TemplateSnapshot | null;

@@ -130,24 +130,39 @@ interface Claimed {
 
 export type DeliveryResult = "sent" | "mock" | "failed" | "not_claimed";
 
+export interface DeliveryDetail {
+  result: DeliveryResult;
+  wamid?: string;
+  errorCode?: string;
+  error?: string;
+}
+
 /**
  * Send one queued outbound message exactly once (pending → sending →
  * sent/failed/mock). Mock mode never calls Meta.
  */
 export async function deliverOutbound(deps: InboxDeps, messageId: number): Promise<DeliveryResult> {
+  return (await deliverOutboundDetailed(deps, messageId)).result;
+}
+
+/** Like deliverOutbound, but also returns Meta's message id or error details. */
+export async function deliverOutboundDetailed(deps: InboxDeps, messageId: number): Promise<DeliveryDetail> {
   const now = deps.now?.() ?? new Date();
   const m = await deps.rpc<Claimed>("inbox_claim_outbound", { p_message_id: messageId });
-  if (!m.claimed) return "not_claimed";
-  const finish = (status: string, wamid: string | null, code: string | null, error: string | null) =>
-    deps.rpc("inbox_finish_outbound", { p_message_id: m.id, p_status: status, p_wa_message_id: wamid, p_error_code: code, p_error: error });
+  if (!m.claimed) return { result: "not_claimed" };
+  let detail: DeliveryDetail = { result: "failed" };
+  const finish = async (status: string, wamid: string | null, code: string | null, error: string | null) => {
+    detail = { result: status as DeliveryResult, wamid: wamid ?? undefined, errorCode: code ?? undefined, error: error ?? undefined };
+    await deps.rpc("inbox_finish_outbound", { p_message_id: m.id, p_status: status, p_wa_message_id: wamid, p_error_code: code, p_error: error });
+  };
 
   if (m.type !== "template" && !windowOpen(m.last_inbound_at, now)) {
     await finish("failed", null, "window_closed", "The 24-hour customer service window is closed. Only approved templates can be sent.");
-    return "failed";
+    return detail;
   }
   if (deps.cfg.mode !== "live") {
     await finish("mock", null, null, "Mock mode: recorded but not sent to WhatsApp.");
-    return "mock";
+    return detail;
   }
 
   let payload: object;
@@ -156,18 +171,18 @@ export async function deliverOutbound(deps: InboxDeps, messageId: number): Promi
   else if (m.type === "template" && m.payload.template) payload = buildTemplateMessage(m.phone, m.payload.template, m.payload.components ?? []);
   else {
     await finish("failed", null, "unsupported", `Unsupported outbound type ${m.type}`);
-    return "failed";
+    return detail;
   }
 
   try {
     const { wamid } = await sendMessage(deps.cfg, payload);
     await finish("sent", wamid, null, null);
-    return "sent";
+    return detail;
   } catch (err) {
     const code = err instanceof MetaApiError ? err.code : "error";
     const msg = err instanceof Error ? `${err.message}${err instanceof MetaApiError && err.details ? ` — ${err.details}` : ""}` : String(err);
     await finish("failed", null, code, msg);
-    return "failed";
+    return detail;
   }
 }
 

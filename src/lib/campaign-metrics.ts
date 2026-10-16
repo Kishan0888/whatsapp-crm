@@ -29,3 +29,11 @@ export function normalizeStats(row: Record<string, unknown>): CampaignStats {
   for (const [k, v] of Object.entries(out)) if (k !== "campaign_id") out[k] = Number(v ?? 0);
   return out as unknown as CampaignStats;
 }
+
+/** Launch-time estimate label: honest about missing rates and unpriced recipients. */
+export function campaignCostLabel(c: { is_dry_run: boolean; est_rate: number | string; est_cost: number | string; est_unpriced?: number | null; currency: string }) {
+  if (c.is_dry_run) return "—";
+  if (!(Number(c.est_rate) > 0)) return "Rate not configured";
+  const money = new Intl.NumberFormat("en-IN", { style: "currency", currency: c.currency || "INR" }).format(Number(c.est_cost));
+  return c.est_unpriced ? `${money} + ${c.est_unpriced} unpriced` : money;
+}

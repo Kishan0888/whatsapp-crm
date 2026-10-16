@@ -1,6 +1,6 @@
 # Project status — WhatsApp CRM
 
-_Last updated: 2026-10-15_
+_Last updated: 2026-10-16_
 
 All planned modules are implemented. What remains is configuration against your real Supabase project and Meta app, and a live end-to-end test (see "Not yet verified").
 
@@ -37,7 +37,15 @@ All planned modules are implemented. What remains is configuration against your 
 - Replies are sent directly (never via the campaign worker), each one exactly once per inbound message (`auto:<wamid>:<n>` keys, pending → sending → sent claim). Mock mode records but never calls Meta.
 - If an inbound message can't be processed, the webhook returns 500 so Meta redelivers; the stored event is re-driven.
 
+**Campaign creation fixes** (branch `feature/campaign-creation`, migration `20261016000005_campaign_eligibility.sql`)
+- One SQL classifier (`audience_classify`) drives the builder count, the review screen and `launch_campaign`: invalid phone, no opt-in, opted out/suppressed, duplicate phone, eligible. Opt-in is required for Marketing *and* Utility (WhatsApp Business Messaging Policy).
+- Server-side preview with visible loading/error states and Recalculate; recalculates on template/segment/tag changes.
+- Cost: eligible recipients in the default country × configured category rate, exact BigInt maths; "Rate not configured" instead of ₹0.00; recipients outside the default country shown as unpriced.
+- Send test message: preview → confirm → one template message to one number via the live sender (approval re-checked with Meta), recorded in messages (`campaign_test`) and audit log; never touches campaign recipients or the worker. Disabled with reasons in mock mode / missing config / unapproved template.
+- Launch dialog shows server-validated count, category and cost; launch re-checks the count atomically; progress banner on launched campaigns.
+
 ## Checks
+- Campaign work (2026-10-16): 113 tests pass (+26: eligibility/dedupe/tags/RLS, launch pricing & idempotency, exact money, cost/missing rate, test-send isolation with mocked Meta, error paths); lint/typecheck/build ✅.
 - Inbox work (2026-10-15): 87 tests pass (+31: SQL idempotency/RLS/status sync, flow state machine, end-to-end handler with mocked Cloud API incl. crash-and-retry), lint/typecheck/build ✅, smoke test: unsigned/forged webhooks 401, verify 200, inbox requires login.
 - `npm run typecheck` ✅  `npm run lint` ✅  `npm run test` ✅ — 56 tests: migrations executed in PGlite (RLS, import, opt-out, audience counts, atomic launch, controls, stale handling, stats, status transitions), template validation/build/round-trip, send payloads (positional, named, media, URL button), error classification, webhook signature + parsing.
 - `next build` ✅ (26 routes). Production smoke test ✅: login redirect, webhook verify (200/403), bad/missing signature (401), valid signature (200), worker auth (401).

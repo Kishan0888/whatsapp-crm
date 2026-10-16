@@ -7,7 +7,7 @@ import { StatusBarChart } from "@/components/status-bar-chart";
 import { CampaignStatusBadge } from "@/components/campaign-status-badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { emptyStats, normalizeStats, rates, STATUS_COLORS } from "@/lib/campaign-metrics";
+import { campaignCostLabel, emptyStats, normalizeStats, rates, STATUS_COLORS } from "@/lib/campaign-metrics";
 import { fmtInt, fmtMoney } from "@/lib/utils";
 import type { Campaign, CampaignStats } from "@/lib/types";
 import { MetaCostForm } from "./meta-cost-form";
@@ -136,7 +136,7 @@ export default async function AnalyticsPage({ searchParams }: { searchParams: Pr
                     <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : cr.read}</TableCell>
                     <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : cr.failure}</TableCell>
                     <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : fmtInt(s.paid)}</TableCell>
-                    <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : fmtMoney(c.est_cost, c.currency)}</TableCell>
+                    <TableCell className="text-right tabular-nums">{campaignCostLabel(c)}</TableCell>
                   </TableRow>
                 );
               })}

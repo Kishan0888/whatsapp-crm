@@ -13,11 +13,16 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { CampaignStatusBadge } from "@/components/campaign-status-badge";
 import { TemplatePreview } from "@/components/template-preview";
 import { StatusBarChart } from "@/components/status-bar-chart";
-import { emptyStats, normalizeStats, rates, STATUS_COLORS } from "@/lib/campaign-metrics";
+import { campaignCostLabel, emptyStats, normalizeStats, rates, STATUS_COLORS } from "@/lib/campaign-metrics";
 import { RETRYABLE_CODES } from "@/lib/whatsapp/errors";
-import { fmtDate, fmtInt, fmtMoney } from "@/lib/utils";
+import { fmtDate, fmtInt } from "@/lib/utils";
 import type { Campaign, Segment, Tag, WhatsAppTemplate } from "@/lib/types";
 import { AutoRefresh, CampaignControls, LaunchDialog } from "../campaign-controls";
+import { AudienceBreakdown, CostSummary } from "../audience-panels";
+import { TestSendCard } from "../test-send-card";
+import { estimateCost, homeCountry, loadAudienceSummary, loadPricingSettings, type AudienceSummary, type CostEstimate } from "@/lib/campaigns/audience";
+import { loadWaConfig } from "@/lib/whatsapp/config";
+import { validateMapping } from "@/lib/whatsapp/send";
 
 const PAGE = 50;
 const STATUSES = ["queued", "sending", "sent", "delivered", "read", "failed", "skipped", "cancelled", "dry_run"];
@@ -50,45 +55,80 @@ export default async function CampaignPage({ params, searchParams }: { params: P
 
   // ---------- Draft: review & launch ----------
   if (c.status === "draft") {
-    const [{ data: counts }, { data: segs }, { data: tags }, { data: settings }] = await Promise.all([
-      supabase.rpc("audience_counts", { p_filter: c.audience_filter }),
+    const t = c.whatsapp_templates;
+    const [{ data: segs }, { data: tags }] = await Promise.all([
       supabase.from("segments").select("id, name"),
       supabase.from("tags").select("id, name"),
-      supabase.from("app_settings").select("est_rate_marketing, est_rate_utility, currency").single(),
     ]);
-    const k = counts as { eligible: number; matching: number; no_consent: number; opted_out: number; no_phone: number };
-    const t = c.whatsapp_templates;
-    const rate = t?.category === "UTILITY" ? Number(settings?.est_rate_utility ?? 0) : Number(settings?.est_rate_marketing ?? 0);
+    // Same server classifier launch_campaign uses; errors are shown, not zeroed.
+    let summary: AudienceSummary | null = null;
+    let cost: CostEstimate | null = null;
+    let loadError: string | null = null;
+    try {
+      const settings = await loadPricingSettings(supabase);
+      const filter = { segment_ids: c.audience_filter.segment_ids ?? [], tag_ids: c.audience_filter.tag_ids ?? [], tag_match: c.audience_filter.tag_match ?? "any" };
+      summary = await loadAudienceSummary(supabase, filter, homeCountry(settings).dialPrefix);
+      cost = estimateCost(summary, t?.category ?? null, settings);
+    } catch (e) {
+      loadError = e instanceof Error ? e.message : "Could not calculate the audience";
+    }
+    const cfg = await loadWaConfig();
+    const mappingErrors = t ? validateMapping(t.components, c.variable_mapping, c.header_media) : ["Choose a template."];
+    const testBlockers = [
+      ...(cfg.mode !== "live" ? ["Mock mode is on (WHATSAPP_MODE is not “live”), so test sends are disabled — mock mode never contacts WhatsApp."] : []),
+      ...(!cfg.token ? ["WHATSAPP_ACCESS_TOKEN is not set."] : []),
+      ...(!cfg.phoneNumberId ? ["The WhatsApp phone number ID is not set (Settings → WhatsApp)."] : []),
+      ...(t && t.status !== "APPROVED" ? [`Template status is ${t.status}; only APPROVED templates can be sent.`] : []),
+      ...(t && !t.meta_template_id ? ["This template isn't known to Meta yet."] : []),
+      ...mappingErrors,
+      ...(!canManage ? ["Only admins and managers can send tests."] : []),
+    ];
     const names = (ids: string[] | undefined, list: Pick<Segment | Tag, "id" | "name">[] | null) =>
-      ids?.length ? ids.map((i) => list?.find((x) => x.id === i)?.name ?? "?").join(", ") : "Any";
+      ids?.length ? ids.map((i) => list?.find((x) => x.id === i)?.name ?? "?").join(", ") : "All";
+    const eligible = summary?.eligible ?? 0;
+    const costLabel = cost?.totalLabel ? `${cost.totalLabel}${cost.unpricedRecipients > 0 ? ` + ${fmtInt(cost.unpricedRecipients)} unpriced` : ""}` : "Rate not configured";
     return (
       <>
         {header}
         <div className="grid gap-4 lg:grid-cols-5">
-          <Card className="lg:col-span-3">
-            <CardHeader><CardTitle>Review</CardTitle><CardDescription>Nothing has been sent. Launching requires typing the exact recipient count.</CardDescription></CardHeader>
-            <CardContent className="grid gap-4">
-              <dl className="grid gap-2 text-sm sm:grid-cols-2">
-                <div><dt className="text-muted-foreground">Segments</dt><dd>{names(c.audience_filter.segment_ids, segs as Segment[])}</dd></div>
-                <div><dt className="text-muted-foreground">Tags ({c.audience_filter.tag_match ?? "any"})</dt><dd>{names(c.audience_filter.tag_ids, tags as Tag[])}</dd></div>
-                <div><dt className="text-muted-foreground">Eligible now</dt><dd className="text-lg font-semibold">{fmtInt(k?.eligible)}</dd></div>
-                <div><dt className="text-muted-foreground">Excluded</dt><dd>{fmtInt(k?.no_consent)} no opt-in · {fmtInt(k?.opted_out)} opted out · {fmtInt(k?.no_phone)} no phone</dd></div>
-                <div><dt className="text-muted-foreground">Template status</dt><dd>{t?.status ?? "—"}{live ? " (re-checked with Meta at launch)" : ""}</dd></div>
-                <div><dt className="text-muted-foreground">Estimated cost</dt><dd>{fmtMoney((k?.eligible ?? 0) * rate, settings?.currency ?? "INR")}</dd></div>
-              </dl>
-              {canManage && (
-                <div className="flex flex-wrap gap-2">
-                  <LaunchDialog id={c.id} eligible={k?.eligible ?? 0} rate={rate} currency={settings?.currency ?? "INR"} live={live} templateName={t?.name ?? ""} />
-                  <CampaignControls id={c.id} status={c.status} hasRetryable={false} />
-                </div>
-              )}
-              {!live && <p className="text-xs text-muted-foreground">Mock mode is on, so launching runs a dry run: recipients are personalised and recorded, but nothing is sent to Meta.</p>}
-            </CardContent>
-          </Card>
-          <Card className="lg:col-span-2">
-            <CardHeader><CardTitle>Message</CardTitle></CardHeader>
-            <CardContent>{t && <TemplatePreview components={t.components} mediaUrl={c.header_media?.type === "image" ? c.header_media.link : undefined} />}</CardContent>
-          </Card>
+          <div className="grid content-start gap-4 lg:col-span-3">
+            <Card>
+              <CardHeader>
+                <CardTitle>Review</CardTitle>
+                <CardDescription>Draft — nothing has been sent. Launching requires typing the exact recipient count, which the server re-checks.</CardDescription>
+              </CardHeader>
+              <CardContent className="grid gap-4">
+                <dl className="grid gap-2 text-sm sm:grid-cols-2">
+                  <div><dt className="text-muted-foreground">Template</dt><dd>{t ? `${t.name} (${t.language}) · ${t.category.toLowerCase()}` : "—"}</dd></div>
+                  <div><dt className="text-muted-foreground">Template status</dt><dd>{t?.status ?? "—"}{live ? " (re-checked with Meta at launch)" : ""}</dd></div>
+                  <div><dt className="text-muted-foreground">Segments</dt><dd>{names(c.audience_filter.segment_ids, segs as Segment[])}</dd></div>
+                  <div><dt className="text-muted-foreground">Tags ({c.audience_filter.tag_match ?? "any"})</dt><dd>{c.audience_filter.tag_ids?.length ? names(c.audience_filter.tag_ids, tags as Tag[]) : "No tag filter"}</dd></div>
+                </dl>
+                <AudienceBreakdown summary={summary} error={loadError} />
+                {canManage && (
+                  <div className="flex flex-wrap gap-2">
+                    {summary && cost && t && (
+                      <LaunchDialog id={c.id} eligible={eligible} costLabel={costLabel} live={live} templateName={t.name} category={t.category} />
+                    )}
+                    <CampaignControls id={c.id} status={c.status} hasRetryable={false} />
+                  </div>
+                )}
+                {summary && eligible === 0 && <p className="text-sm text-amber-800 dark:text-amber-300">No eligible recipients — the campaign can&apos;t be launched until leads in this audience have recorded opt-in.</p>}
+                {!live && <p className="text-xs text-muted-foreground">Mock mode is on, so launching runs a dry run: recipients are personalised and recorded, but nothing is sent to Meta.</p>}
+              </CardContent>
+            </Card>
+            <TestSendCard campaignId={c.id} blockers={testBlockers} />
+          </div>
+          <div className="grid content-start gap-4 lg:col-span-2">
+            <Card>
+              <CardHeader><CardTitle>Message</CardTitle></CardHeader>
+              <CardContent>{t && <TemplatePreview components={t.components} mediaUrl={c.header_media?.type === "image" ? c.header_media.link : undefined} />}</CardContent>
+            </Card>
+            <Card>
+              <CardHeader><CardTitle>Estimated cost</CardTitle></CardHeader>
+              <CardContent><CostSummary cost={cost} eligible={eligible} /></CardContent>
+            </Card>
+          </div>
         </div>
       </>
     );
@@ -123,6 +163,19 @@ export default async function CampaignPage({ params, searchParams }: { params: P
     <>
       {header}
       <AutoRefresh active={c.status === "running"} />
+      {!c.is_dry_run && (
+        <div role="status" className={`mb-4 rounded-md p-3 text-sm ${s.failed > 0 ? "bg-destructive/10 text-destructive" : c.status === "running" ? "bg-sky-500/10" : "bg-muted/60"}`}>
+          {c.status === "running" && (
+            <>Sending in progress: {fmtInt(s.total - pending)} of {fmtInt(s.total)} processed, {fmtInt(pending)} pending. Messages are sent by the background worker — if no scheduler is configured, use “Process now”.</>
+          )}
+          {c.status === "paused" && <>Paused with {fmtInt(pending)} message(s) not yet sent.</>}
+          {c.status === "cancelled" && <>Cancelled. {fmtInt(s.submitted)} message(s) had already been submitted to WhatsApp; the rest were not sent.</>}
+          {c.status === "completed" && (
+            <>Finished processing: {fmtInt(s.submitted)} submitted to WhatsApp{s.failed > 0 ? `, ${fmtInt(s.failed)} failed` : ""}{s.skipped > 0 ? `, ${fmtInt(s.skipped)} skipped` : ""}. Delivery and read counts come from Meta&apos;s webhooks and may keep updating.</>
+          )}
+          {s.failed > 0 && c.status !== "completed" && <> {fmtInt(s.failed)} failed so far — see “Failures &amp; skips”.</>}
+        </div>
+      )}
       {canManage && <div className="mb-4"><CampaignControls id={c.id} status={c.status} hasRetryable={hasRetryable} /></div>}
       {c.is_dry_run && (
         <p className="mb-4 rounded-md bg-amber-500/10 p-3 text-sm text-amber-800 dark:text-amber-300">
@@ -154,7 +207,7 @@ export default async function CampaignPage({ params, searchParams }: { params: P
         <Card className="lg:col-span-2">
           <CardHeader><CardTitle>Cost</CardTitle></CardHeader>
           <CardContent className="grid gap-2 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Estimated (at launch)</span><span className="tabular-nums">{c.is_dry_run ? "—" : fmtMoney(c.est_cost, c.currency)}</span></div>
+            <div className="flex justify-between"><span className="text-muted-foreground">Estimated (at launch)</span><span className="tabular-nums">{campaignCostLabel(c)}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Billable per webhooks</span><span className="tabular-nums">{fmtInt(s.paid)} msgs</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Free per webhooks</span><span className="tabular-nums">{fmtInt(s.free)} msgs</span></div>
             <p className="text-xs text-muted-foreground">Meta reports pricing type per message in webhooks; amounts aren&apos;t included. See Analytics for Meta-reported charges.</p>

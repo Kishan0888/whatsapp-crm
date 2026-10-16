@@ -112,7 +112,7 @@ export async function ThreadView({ id, role }: { id: string; role: AppRole }) {
                   {(m.source === "campaign" || m.source === "automation" || m.meta?.template) && (
                     <div className="mb-1 flex items-center gap-1 text-[11px] opacity-70">
                       {m.source === "campaign" ? <Megaphone className="size-3" /> : <Bot className="size-3" />}
-                      {m.source === "campaign" ? `Campaign: ${m.meta?.campaign ?? "—"}${m.meta?.template ? ` · ${m.meta.template}` : ""}` : m.meta?.template ? `Automated · template ${m.meta.template}` : "Automated reply"}
+                      {m.source === "campaign" ? `Campaign: ${m.meta?.campaign ?? "—"}${m.meta?.template ? ` · ${m.meta.template}` : ""}` : m.source === "campaign_test" ? `Test send · template ${m.meta?.template ?? "—"}` : m.meta?.template ? `Automated · template ${m.meta.template}` : "Automated reply"}
                     </div>
                   )}
                   {m.type === "button" || m.type === "interactive" ? (

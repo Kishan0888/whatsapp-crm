@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Users } from "lucide-react";
+import { Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,9 +11,9 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { TemplatePreview } from "@/components/template-preview";
 import { templateShape } from "@/lib/whatsapp/templates";
 import { LEAD_FIELDS, resolveVar, validateMapping, type HeaderMedia, type VarSource, type VariableMapping } from "@/lib/whatsapp/send";
-import { fmtInt, fmtMoney } from "@/lib/utils";
 import type { Segment, Tag, WhatsAppTemplate } from "@/lib/types";
 import { previewAudience, saveCampaign, type AudiencePreview } from "./actions";
+import { AudienceBreakdown, CostSummary } from "./audience-panels";
 
 export interface BuilderInitial {
   name: string;
@@ -32,8 +32,6 @@ export function CampaignBuilder({
   segments,
   tags,
   customKeys,
-  estRates,
-  currency,
   live,
 }: {
   id: string | null;
@@ -42,8 +40,6 @@ export function CampaignBuilder({
   segments: Segment[];
   tags: Tag[];
   customKeys: string[];
-  estRates: { MARKETING: number; UTILITY: number };
-  currency: string;
   live: boolean;
 }) {
   const router = useRouter();
@@ -56,27 +52,36 @@ export function CampaignBuilder({
   const [media, setMedia] = useState<HeaderMedia | null>(initial?.media ?? null);
   const [audience, setAudience] = useState<AudiencePreview | null>(null);
   const [loadingAudience, setLoadingAudience] = useState(false);
+  const [audienceError, setAudienceError] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
   const [pending, start] = useTransition();
 
   const template = templates.find((t) => t.id === templateId);
   const shape = useMemo(() => (template ? templateShape(template.components) : null), [template]);
 
-  // Refresh the audience preview whenever filters change.
+  // Server-side recalculation whenever the template, filters or a manual refresh change.
   useEffect(() => {
     let cancelled = false;
     const t = setTimeout(async () => {
       setLoadingAudience(true);
-      const r = await previewAudience({ segment_ids: segmentIds, tag_ids: tagIds, tag_match: tagMatch });
+      const r = await previewAudience({ segment_ids: segmentIds, tag_ids: tagIds, tag_match: tagMatch }, templateId || null).catch(
+        (e: unknown) => ({ ok: false as const, error: e instanceof Error ? e.message : "Network error" }),
+      );
       if (cancelled) return;
       setLoadingAudience(false);
-      if (r.ok) setAudience(r.data);
-      else toast.error(r.error);
+      if (r.ok) {
+        setAudience(r.data);
+        setAudienceError(null);
+      } else {
+        setAudience(null); // never keep showing a stale or zero count after a failure
+        setAudienceError(r.error);
+      }
     }, 300);
     return () => {
       cancelled = true;
       clearTimeout(t);
     };
-  }, [segmentIds, tagIds, tagMatch]);
+  }, [segmentIds, tagIds, tagMatch, templateId, refreshKey]);
 
   function chooseTemplate(id: string) {
     setTemplateId(id);
@@ -100,8 +105,7 @@ export function CampaignBuilder({
   }, [shape, mapping, sampleLead]);
 
   const mappingErrors = template ? validateMapping(template.components, mapping, shape?.mediaHeader ? media : null) : [];
-  const eligible = audience?.counts.eligible ?? 0;
-  const rate = template ? (estRates[template.category as "MARKETING" | "UTILITY"] ?? 0) : 0;
+  const eligible = audience?.summary.eligible ?? 0;
   const toggle = (list: string[], set: (v: string[]) => void, id: string) => set(list.includes(id) ? list.filter((x) => x !== id) : [...list, id]);
   const setVar = (key: string, patch: Partial<VarSource>) =>
     setMapping((m) => ({ ...m, [key]: { ...(m[key] ?? { source: "field", value: "" }), ...patch } as VarSource }));
@@ -183,17 +187,8 @@ export function CampaignBuilder({
                 ))}
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 rounded-md bg-muted/50 p-3 text-sm sm:grid-cols-5">
-              <div className="col-span-2 flex items-center gap-2 sm:col-span-1">
-                {loadingAudience ? <Loader2 className="size-4 animate-spin" /> : <Users className="size-4 text-primary" />}
-                <div><div className="text-lg font-semibold tabular-nums">{fmtInt(eligible)}</div><div className="text-xs text-muted-foreground">eligible</div></div>
-              </div>
-              <div><div className="tabular-nums">{fmtInt(audience?.counts.matching)}</div><div className="text-xs text-muted-foreground">matching</div></div>
-              <div><div className="tabular-nums">{fmtInt(audience?.counts.no_consent)}</div><div className="text-xs text-muted-foreground">no opt-in</div></div>
-              <div><div className="tabular-nums">{fmtInt(audience?.counts.opted_out)}</div><div className="text-xs text-muted-foreground">opted out</div></div>
-              <div><div className="tabular-nums">{fmtInt(audience?.counts.no_phone)}</div><div className="text-xs text-muted-foreground">no phone</div></div>
-            </div>
-          </CardContent>
+            <AudienceBreakdown summary={audience?.summary ?? null} loading={loadingAudience} error={audienceError} onRefresh={() => setRefreshKey((k) => k + 1)} />
+                    </CardContent>
         </Card>
 
         {template && shape && !shape.unsupported && (
@@ -250,14 +245,9 @@ export function CampaignBuilder({
           </CardContent>
         </Card>
         <Card className="gap-2">
-          <CardContent className="grid gap-1 text-sm">
-            <div className="flex justify-between"><span className="text-muted-foreground">Eligible recipients</span><span className="tabular-nums">{fmtInt(eligible)}</span></div>
-            <div className="flex justify-between"><span className="text-muted-foreground">Estimated rate ({template?.category.toLowerCase() ?? "—"})</span><span className="tabular-nums">{fmtMoney(rate, currency)}</span></div>
-            <div className="flex justify-between font-medium"><span>Estimated cost</span><span className="tabular-nums">{fmtMoney(eligible * rate, currency)}</span></div>
-            <p className="pt-1 text-xs text-muted-foreground">
-              Estimate from the rates in Settings. Meta bills per delivered message by category and country; actual charges can differ.
-              {rate === 0 && " Set your rates in Settings for a meaningful estimate."}
-            </p>
+          <CardHeader><CardTitle>Estimated cost</CardTitle></CardHeader>
+          <CardContent>
+            <CostSummary cost={audience?.cost ?? null} eligible={eligible} />
           </CardContent>
         </Card>
         {mappingErrors.length > 0 && template && (
@@ -266,7 +256,7 @@ export function CampaignBuilder({
         <Button disabled={pending || !name.trim() || !template || mappingErrors.length > 0} onClick={save}>
           {pending && <Loader2 className="animate-spin" />} Save campaign &amp; review
         </Button>
-        <p className="text-xs text-muted-foreground">Saving doesn&apos;t send anything. You&apos;ll confirm the exact recipient count on the next screen{live ? "" : " (mock mode: launch runs a dry run)"}.</p>
+        <p className="text-xs text-muted-foreground">Saving keeps the campaign as a draft and sends nothing. On the next screen you can send a test to one number and confirm the exact recipient count{live ? "" : " (mock mode: launch runs a dry run)"}.</p>
       </div>
     </div>
   );
