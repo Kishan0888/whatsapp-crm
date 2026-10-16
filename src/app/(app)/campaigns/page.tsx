@@ -7,8 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { CampaignStatusBadge } from "@/components/campaign-status-badge";
-import { emptyStats, normalizeStats, rates } from "@/lib/campaign-metrics";
-import { fmtDate, fmtInt, fmtMoney } from "@/lib/utils";
+import { campaignCostLabel, emptyStats, normalizeStats, rates } from "@/lib/campaign-metrics";
+import { fmtDate, fmtInt } from "@/lib/utils";
 import type { Campaign } from "@/lib/types";
 
 export const metadata = { title: "Campaigns" };
@@ -63,7 +63,7 @@ export default async function CampaignsPage() {
                   <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : <>{fmtInt(s.delivered)} <span className="text-xs text-muted-foreground">{r.delivery}</span></>}</TableCell>
                   <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : <>{fmtInt(s.read)} <span className="text-xs text-muted-foreground">{r.read}</span></>}</TableCell>
                   <TableCell className="text-right tabular-nums">{fmtInt(s.failed)}</TableCell>
-                  <TableCell className="text-right tabular-nums">{c.is_dry_run ? "—" : fmtMoney(c.est_cost, c.currency)}</TableCell>
+                  <TableCell className="text-right tabular-nums">{campaignCostLabel(c)}</TableCell>
                   <TableCell className="text-xs text-muted-foreground">{fmtDate(c.created_at)}</TableCell>
                 </TableRow>
               );

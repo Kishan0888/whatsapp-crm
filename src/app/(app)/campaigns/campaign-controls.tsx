@@ -7,7 +7,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { fmtInt, fmtMoney } from "@/lib/utils";
+import { fmtInt } from "@/lib/utils";
 import { controlCampaign, deleteDraftCampaign, launchCampaign, processNow } from "./actions";
 
 type R = { ok: true; message?: string } | { ok: false; error: string };
@@ -30,8 +30,8 @@ function useRun() {
 export { AutoRefresh } from "@/components/auto-refresh";
 
 export function LaunchDialog({
-  id, eligible, rate, currency, live, templateName,
-}: { id: string; eligible: number; rate: number; currency: string; live: boolean; templateName: string }) {
+  id, eligible, costLabel, live, templateName, category,
+}: { id: string; eligible: number; costLabel: string; live: boolean; templateName: string; category: string }) {
   const router = useRouter();
   const { pending, run } = useRun();
   const [typed, setTyped] = useState("");
@@ -53,9 +53,10 @@ export function LaunchDialog({
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-2 rounded-md bg-muted/50 p-3 text-sm">
-          <div className="flex justify-between"><span>Template</span><span className="font-medium">{templateName}</span></div>
+          <div className="flex justify-between"><span>Template</span><span className="font-medium">{templateName} · {category.toLowerCase()}</span></div>
           <div className="flex justify-between"><span>Recipients (opted-in, not suppressed)</span><span className="font-medium tabular-nums">{fmtInt(eligible)}</span></div>
-          {live && <div className="flex justify-between"><span>Estimated cost</span><span className="font-medium tabular-nums">{fmtMoney(eligible * rate, currency)}</span></div>}
+          {live && <div className="flex justify-between"><span>Estimated cost</span><span className="font-medium tabular-nums">{costLabel}</span></div>}
+          <p className="text-xs text-muted-foreground">Launch re-checks eligibility on the server. If the count no longer matches, nothing is queued and you&apos;ll be asked to review again.</p>
         </div>
         <label className="flex items-start gap-2 text-sm">
           <input type="checkbox" className="mt-0.5" checked={ack} onChange={(e) => setAck(e.target.checked)} />

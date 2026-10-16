@@ -45,6 +45,11 @@ Campaign messages are sent by `/api/worker/send`, which needs to be called regul
 - Your campaign templates need quick-reply buttons labelled exactly **Free Growth Report** and **Send Details**.
 - Staff replies and automated replies only go out inside WhatsApp's 24-hour service window, which a contact's message or button tap opens.
 
+## Campaign cost estimates & test sends
+- Apply `supabase/migrations/20261016000005_campaign_eligibility.sql`.
+- Set **Settings → WhatsApp Cloud API → Estimated cost per marketing / utility message** from Meta's current rate card for your default country. Until set, estimates show "Rate not configured".
+- On a draft campaign, use **Send test message** (live mode only) to send the approved template to your own number before launching.
+
 ## Safety
 - WhatsApp secrets live only in server environment variables.
 - Only APPROVED templates (re-checked with Meta at launch in live mode) can be sent.

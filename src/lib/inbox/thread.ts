@@ -6,7 +6,7 @@ import { valuesFromSendComponents, type SendComponent, type TemplateSnapshot } f
 export interface ThreadItem {
   key: string;
   direction: "in" | "out";
-  source: "inbound" | "inbox" | "automation" | "campaign";
+  source: "inbound" | "inbox" | "automation" | "campaign" | "campaign_test";
   type: string;
   body: string;
   at: string;
